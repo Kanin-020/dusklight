@@ -33,3 +33,18 @@ if (DEFINED GUIDE_TEST_PAGE AND EXISTS "${GUIDE_TEST_PAGE}")
 endif ()
 
 gtest_discover_tests(dusk_guide_tests)
+
+# Twinpad adapter: wire (base64url, NDJSON, input_report) and pad mapping. Same
+# shape as the guide test — the adapter's contract and mapping are std-only, so
+# they are compiled here without the engine. Only built when the adapter is on.
+if (DUSK_TWINPAD)
+  add_executable(dusk_twinpad_tests
+    twinpad_protocol_test.cpp
+    ../src/dusk/twinpad/Core/TwinpadProtocol.cpp
+    ../src/dusk/twinpad/Channels/TwinpadPadMap.cpp
+    ../src/dusk/twinpad/Video/TwinpadH264.cpp
+  )
+  target_include_directories(dusk_twinpad_tests PRIVATE ../src ../include)
+  target_link_libraries(dusk_twinpad_tests PRIVATE gtest gtest_main PkgConfig::OpenH264)
+  gtest_discover_tests(dusk_twinpad_tests)
+endif ()

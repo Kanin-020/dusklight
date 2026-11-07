@@ -53,6 +53,9 @@ private:
     bool mRumbleTestActive = false;
     int mRumbleTestPort = -1;
     ActionBindConfigVar* mPendingActionBinding = nullptr;
+    // Último puerto Twinpad visto, para refrescar «Device» cuando el adaptador
+    // lo selecciona o lo suelta con la ventana abierta.
+    int mLastTwinpadPort = -2;
 };
 
 Rml::String native_button_name(SDL_Gamepad* gamepad, u32 buttonUntyped);

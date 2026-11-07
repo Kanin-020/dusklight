@@ -367,6 +367,13 @@ struct UserSettings {
         ConfigVar<int> configMigration;
         // Guide reader (second screen).
         ConfigVar<bool> guideEnabled;
+        // Twinpad: mando (y panel) del teléfono vía el Servidor PC. Apagado, el
+        // adaptador no arranca hilo de red ni toca el pad virtual.
+        ConfigVar<bool> twinpadEnabled;
+        // Puerto cuyo «Device» es Twinpad (-1 = ninguno). El adaptador lo
+        // selecciona al conectar y el usuario puede elegirlo en Ajustes →
+        // Controles; es lo que hace que el mando del teléfono controle el juego.
+        ConfigVar<int> twinpadInputPort;
     } game;
 
     struct {

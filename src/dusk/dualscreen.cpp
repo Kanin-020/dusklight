@@ -31,6 +31,13 @@
 #include <chrono>
 #endif
 
+#if DUSK_TWINPAD
+// Adaptador Twinpad: único include del juego hacia el módulo. El adaptador no
+// conoce el companion; solo lee el panel que este archivo presenta (ver
+// src/dusk/twinpad/README.md).
+#include "dusk/twinpad/TwinpadHooks.h"
+#endif
+
 #if DUSK_PHONE_SPIKE_STATE
 #include "dusk/companion_state.h"
 #include "dusk/companion_icon_decode.h"
@@ -1528,6 +1535,12 @@ void beginHudCapture() {
     const bool enabled = isEnabled();
     updateAuxWindow(wanted);
     s_active = enabled;
+#if DUSK_TWINPAD
+    // Un solo punto de enganche: tick() aplica el pad del teléfono y, con el
+    // panel presentándose, arma un readback y lo publica. Nada del estado del
+    // companion se le pasa ni se lee desde aquí salvo "¿hay panel?".
+    twinpad::tick(enabled);
+#endif
     // Boot/loading: keep the second screen on the branded splash instead of
     // black until the dashboard has real content. Leaving gameplay (quit to
     // title, game over) re-arms it — endHudCapture keeps the dashboard while

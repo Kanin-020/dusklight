@@ -63,6 +63,9 @@
 #include "dusk/speedrun.h"
 #include "dusk/texture_replacements.hpp"
 #include "dusk/time.h"
+#if DUSK_TWINPAD
+#include "dusk/twinpad/TwinpadHooks.h"
+#endif
 #include "dusk/ui/command_console.hpp"
 #include "dusk/ui/menu_bar.hpp"
 #include "dusk/ui/overlay.hpp"
@@ -985,6 +988,10 @@ int game_main(int argc, char* argv[]) {
     dusk::audio::Shutdown();
     dusk::ui::shutdown();
     dusk::texture_replacements::shutdown();
+#if DUSK_TWINPAD
+    // Une el hilo de red antes de que se libere el runtime del juego.
+    dusk::twinpad::shutdown();
+#endif
     dusk::config::shutdown();
     aurora_shutdown();
 

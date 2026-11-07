@@ -15,6 +15,7 @@
 #include "dusk/companion.h"
 #include "dusk/menu_pointer.h"
 #include "dusk/settings.h"
+#include "dusk/twinpad/TwinpadHooks.h"
 #include "dusk/ui/touch_controls.hpp"
 
 #include <tracy/Tracy.hpp>
@@ -84,6 +85,13 @@ void mDoCPd_c::read() {
     ZoneScoped;
 #if TARGET_PC
     dusk::ui::sync_virtual_input();
+#if DUSK_TWINPAD
+    // Twinpad DESPUÉS del táctil y ANTES de JUTGamePad::read(): PADRead solo
+    // fusiona el pad virtual vigente en ese instante, y el táctil limpia
+    // PAD_CHAN0 al empezar este mismo método. Aplicarlo al dibujar (como se
+    // hacía) dejaba el mando del teléfono invisible para el juego.
+    dusk::twinpad::applyInput();
+#endif
 #endif
     JUTGamePad::read();
 

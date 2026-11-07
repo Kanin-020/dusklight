@@ -183,6 +183,8 @@ UserSettings g_userSettings = {
         .dualScreenHaptics {"game.dualScreenHaptics", true},
         .configMigration {"game.configMigration", 0},
         .guideEnabled {"game.guideEnabled", true},
+        .twinpadEnabled {"game.twinpadEnabled", true},
+        .twinpadInputPort {"game.twinpadInputPort", -1},
     },
 
     .backend = {
@@ -335,6 +337,8 @@ void registerSettings() {
     Register(g_userSettings.game.dualScreenHudMode);
     Register(g_userSettings.game.dualScreenSwap);
     Register(g_userSettings.game.guideEnabled);
+    Register(g_userSettings.game.twinpadEnabled);
+    Register(g_userSettings.game.twinpadInputPort);
     Register(g_userSettings.game.dualScreenDisplay);
     Register(g_userSettings.game.dualScreenPosX);
     Register(g_userSettings.game.dualScreenPosY);

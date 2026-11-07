@@ -1481,6 +1481,18 @@ set(DUSK_FILES
         src/dusk/phone_spike_pairing.cpp
         src/dusk/phone_spike_ws.h
         src/dusk/phone_spike_ws.cpp
+        src/dusk/twinpad/TwinpadHooks.h
+        src/dusk/twinpad/TwinpadHooks.cpp
+        src/dusk/twinpad/Core/TwinpadProtocol.h
+        src/dusk/twinpad/Core/TwinpadProtocol.cpp
+        src/dusk/twinpad/Core/TwinpadSocket.h
+        src/dusk/twinpad/Core/TwinpadSocket.cpp
+        src/dusk/twinpad/Client/TwinpadClient.h
+        src/dusk/twinpad/Client/TwinpadClient.cpp
+        src/dusk/twinpad/Video/TwinpadH264.h
+        src/dusk/twinpad/Video/TwinpadH264.cpp
+        src/dusk/twinpad/Channels/TwinpadPadMap.h
+        src/dusk/twinpad/Channels/TwinpadPadMap.cpp
         #src/dusk/m_Do_ext_dusk.cpp
         src/dusk/hq_minimap.cpp
         src/dusk/imgui/ImGuiActorSpawner.cpp

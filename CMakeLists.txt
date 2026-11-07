@@ -95,6 +95,7 @@ option(DUSK_ENABLE_CODE_MODS "Enable code mods" ON)
 option(DUSK_ENABLE_OPUS "Enable loading Opus audio files for mods" OFF)
 option(DUSK_PHONE_SPIKE "Build the phone-companion-display network spike (see docs/phone-companion-design.md); throwaway, off by default" OFF)
 option(DUSK_PHONE_SPIKE_STATE "Add the phone-companion state-streaming fast path (hearts/rupees/keys/items as small diffs instead of rendered frames); requires DUSK_PHONE_SPIKE, off by default" OFF)
+option(DUSK_TWINPAD "Build the Twinpad adapter (second screen + phone gamepad over the dual-screen panel, see src/dusk/twinpad/README.md); runtime toggle in Settings > Twinpad" ON)
 
 
 set(DUSK_HAS_FUNCHOOK OFF)
@@ -305,6 +306,14 @@ if (DUSK_PHONE_SPIKE)
 endif ()
 if (DUSK_PHONE_SPIKE_STATE)
     list(APPEND GAME_COMPILE_DEFS DUSK_PHONE_SPIKE_STATE=1)
+endif ()
+if (DUSK_TWINPAD)
+    list(APPEND GAME_COMPILE_DEFS DUSK_TWINPAD=1)
+    # El panel se publica como H.264 (SPEC-003 §4): el mismo codificador que usa
+    # el adaptador de Cemu. Es una dependencia dura del adaptador, no del juego.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(OpenH264 REQUIRED IMPORTED_TARGET openh264)
+    list(APPEND GAME_LIBS PkgConfig::OpenH264)
 endif ()
 
 if (WIN32)

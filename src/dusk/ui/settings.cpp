@@ -1431,6 +1431,21 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                     "off Minimal HUD.");
             });
 
+#if DUSK_TWINPAD
+        // Mando del teléfono (adaptador Twinpad). Es un interruptor de RUNTIME:
+        // apagado, el adaptador no arranca el hilo de red ni escribe el pad.
+        config_bool_select(leftPane, rightPane, getSettings().game.twinpadEnabled,
+            {
+                .key = "Twinpad",
+                .helpText =
+                    "Acepta el gamepad del teléfono desde la app Twinpad vinculada al "
+                    "Servidor PC en 127.0.0.1:8421.<br/>"
+                    "Requiere el servidor en ejecución; si no está, el ajuste no hace "
+                    "nada. La segunda pantalla del teléfono es independiente y se elige "
+                    "en «Dual Screen HUD».",
+            });
+#endif
+
         // Directly below the style row, and only while the second screen is in
         // use — with no second panel there is nowhere for the game to go.
         //

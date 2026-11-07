@@ -27,7 +27,17 @@ bool keyboard_active(int port) {
     return PADGetKeyButtonBindings(static_cast<u32>(port), &count) != nullptr;
 }
 
+// Twinpad no es un gamepad SDL: no tiene índice ni nombre de dispositivo. Su
+// presencia en «Device» la lleva el CVar, que el adaptador selecciona al
+// conectar y el usuario puede cambiar aquí.
+bool twinpad_active(int port) {
+    return getSettings().game.twinpadInputPort.getValue() == port;
+}
+
 Rml::String current_controller_name(int port) {
+    if (twinpad_active(port)) {
+        return "Twinpad";
+    }
     const char* name = PADGetName(port);
     if (name != nullptr) {
         return name;
@@ -280,6 +290,13 @@ void ControllerConfigWindow::hide(bool close) {
 
 void ControllerConfigWindow::update() {
     poll_pending_binding();
+    // El adaptador selecciona o suelta Twinpad al conectar/desconectar; con la
+    // ventana abierta, «Device» debe reflejarlo sin reabrir el menú.
+    const int twinpadPort = getSettings().game.twinpadInputPort.getValue();
+    if (twinpadPort != mLastTwinpadPort) {
+        mLastTwinpadPort = twinpadPort;
+        refresh_controller_page();
+    }
     Window::update();
 }
 
@@ -392,19 +409,33 @@ void ControllerConfigWindow::build_port_tab(Rml::Element* content, int port) {
 void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
     pane.clear();
 
+    // Twinpad envía un mapeo fijo de GameCube por el pad virtual: no hay
+    // botones ni ejes individuales que reasignar, como sí pasa con SDL o teclado.
+    if (page != Page::Controller && twinpad_active(port)) {
+        pane.add_text(
+            "Twinpad sends a fixed GameCube mapping. Choose another device under Device to edit bindings.");
+        return;
+    }
+
     switch (page) {
     case Page::Controller: {
         pane.add_button(
                 {
                     .text = "None",
                 .isSelected =
-                    [port] { return PADGetIndexForPort(port) < 0 && !keyboard_active(port); },
+                    [port] {
+                        return PADGetIndexForPort(port) < 0 && !keyboard_active(port) &&
+                               !twinpad_active(port);
+                    },
             })
             .on_pressed([this, port] {
                 mDoAud_seStartMenu(kSoundClick);
                 cancel_pending_binding();
                 PADClearPort(port);
                 PADSetKeyboardActive(static_cast<u32>(port), FALSE);
+                if (twinpad_active(port)) {
+                    getSettings().game.twinpadInputPort.setValue(-1);
+                }
                 PADSerializeMappings();
                 config::ClearAllActionBindings(port);
                 refresh_controller_page();
@@ -419,8 +450,28 @@ void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
                 cancel_pending_binding();
                 PADClearPort(port);
                 PADSetKeyboardActive(static_cast<u32>(port), TRUE);
+                if (twinpad_active(port)) {
+                    getSettings().game.twinpadInputPort.setValue(-1);
+                }
                 PADSerializeMappings();
                 config::ClearAllActionBindings(port);
+            });
+
+        // Un solo dueño por puerto: Twinpad escribe el pad virtual, así que al
+        // elegirlo se suelta cualquier mando SDL o teclado del mismo puerto.
+        pane.add_button({
+                            .text = "Twinpad",
+                            .isSelected = [port] { return twinpad_active(port); },
+                        })
+            .on_pressed([this, port] {
+                mDoAud_seStartMenu(kSoundClick);
+                cancel_pending_binding();
+                PADClearPort(port);
+                PADSetKeyboardActive(static_cast<u32>(port), FALSE);
+                PADSerializeMappings();
+                config::ClearAllActionBindings(port);
+                getSettings().game.twinpadInputPort.setValue(port);
+                refresh_controller_page();
             });
 
         const u32 controllerCount = PADCount();
@@ -440,6 +491,9 @@ void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
                     mDoAud_seStartMenu(kSoundClick);
                     cancel_pending_binding();
                     PADSetKeyboardActive(static_cast<u32>(port), FALSE);
+                    if (twinpad_active(port)) {
+                        getSettings().game.twinpadInputPort.setValue(-1);
+                    }
                     PADSetPortForIndex(i, port);
                     PADSerializeMappings();
                     config::ClearAllActionBindings(port);
