@@ -11,10 +11,12 @@
 #include "dusk/logging.h"
 #include "dusk/settings.h"
 #include "dusk/twinpad/Channels/TwinpadPadMap.h"
+#include "dusk/twinpad/Channels/TwinpadTouch.h"
 #include "dusk/twinpad/Client/TwinpadClient.h"
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -41,8 +43,14 @@ uint64_t sLastLoggedFrames = 0;
 // Puerto que Twinpad ocupa al conectar sin que el usuario haya elegido otro.
 constexpr int kAutoPort = 0;
 bool sAutoSelected = false;
-s32 sPreviousIndex = -1;
-bool sPreviousKeyboard = false;
+
+// Táctil del teléfono (CR-092). El panel es del companion y él ya sabe qué
+// hay debajo de cada coordenada; el adaptador solo traduce el `input_report`
+// (0…65535 + `touch_pressed`) a su convención de gestos y lo deja para que el
+// borde del juego lo entregue. Como mucho un evento pendiente: el panel
+// consume un gesto por frame.
+TouchTracker sTouchTracker;
+std::optional<TouchEvent> sTouchPending;
 
 s8 stickValue(float value) {
     return static_cast<s8>(std::clamp(std::lround(value * 127.0f), -127l, 127l));
@@ -116,21 +124,21 @@ void releasePad() {
     sAppliedPort = -1;
 }
 
-// Autoactivarse (decisión del owner): al conectar, Twinpad pasa a ser el
-// dispositivo del puerto 1 y se recuerda quién lo ocupaba para devolverlo al
-// desconectar. Si el usuario ya eligió un puerto, no se toca.
+// Autoactivarse (decisión del owner, CR-092): al conectar, Twinpad pasa a ser
+// el dispositivo del puerto 1 SOLO si ese puerto está libre. Si ya hay un mando
+// SDL o el teclado en él, no se le quita nada: el usuario puede elegir
+// «Twinpad» a mano en Ajustes → Controles → Device, que sí libera el puerto.
 void autoSelect() {
     if (getSettings().game.twinpadInputPort.getValue() >= 0) {
         return;
     }
-    u32 count = 0;
-    sPreviousKeyboard = PADGetKeyButtonBindings(kAutoPort, &count) != nullptr;
-    sPreviousIndex = PADGetIndexForPort(kAutoPort);
-    // El puerto queda para Twinpad: un mando SDL o el teclado seguirían
-    // escribiendo el mismo canal.
-    PADClearPort(kAutoPort);
-    PADSetKeyboardActive(kAutoPort, FALSE);
-    PADSerializeMappings();
+    u32 keyboardButtons = 0;
+    const bool portFree = PADGetIndexForPort(kAutoPort) < 0 &&
+        PADGetKeyButtonBindings(kAutoPort, &keyboardButtons) == nullptr;
+    if (!portFree) {
+        DuskLog.info("twinpad: el puerto 1 ya tiene otro control; no se auto-selecciona");
+        return;
+    }
     getSettings().game.twinpadInputPort.setValue(kAutoPort);
     sAutoSelected = true;
     DuskLog.info("twinpad: seleccionado como dispositivo del puerto 1 al conectar");
@@ -142,16 +150,16 @@ void revertAutoSelection() {
     }
     sAutoSelected = false;
     getSettings().game.twinpadInputPort.setValue(-1);
-    if (sPreviousKeyboard) {
-        PADSetKeyboardActive(kAutoPort, TRUE);
-    } else if (sPreviousIndex >= 0) {
-        PADSetPortForIndex(static_cast<u32>(sPreviousIndex), kAutoPort);
-    } else {
-        PADClearPort(kAutoPort);
-    }
+    // El puerto estaba libre cuando se tomó, así que devolverlo es vaciarlo.
+    PADClearPort(kAutoPort);
     PADSerializeMappings();
-    sPreviousIndex = -1;
-    sPreviousKeyboard = false;
+}
+
+void releaseTouch() {
+    TouchEvent touch;
+    if (sTouchTracker.release(touch)) {
+        sTouchPending = touch;
+    }
 }
 
 }  // namespace
@@ -182,6 +190,10 @@ void applyInput() {
             // Diagnóstico: sin esta línea, un mando que no responde no se
             // distingue de un teléfono que no manda reportes.
             DuskLog.info("twinpad: primer input_report del teléfono aplicado al pad");
+        }
+        TouchEvent touch;
+        if (sTouchTracker.update(report, touch)) {
+            sTouchPending = touch;
         }
         const PadState pad = mapInput(report);
         applyPad(&pad, port);
@@ -220,6 +232,7 @@ void tick(bool hudEnabled) {
         } else {
             DuskLog.info("twinpad: sin servidor; reintento cada 2 s");
             releasePad();
+            releaseTouch();
             revertAutoSelection();
         }
     }
@@ -256,6 +269,17 @@ void tick(bool hudEnabled) {
     }
 }
 
+bool takeTouch(float& u, float& v, int& action) {
+    if (!sTouchPending) {
+        return false;
+    }
+    u = sTouchPending->u;
+    v = sTouchPending->v;
+    action = sTouchPending->action;
+    sTouchPending.reset();
+    return true;
+}
+
 void shutdown() {
     if (!sStarted) {
         return;
@@ -265,6 +289,7 @@ void shutdown() {
     sCaptureArmed = false;
     sWasConnected = false;
     releasePad();
+    releaseTouch();
     revertAutoSelection();
     sLoggedFirstInput = false;
 }

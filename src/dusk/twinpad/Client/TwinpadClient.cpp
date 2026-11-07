@@ -128,7 +128,7 @@ void Client::workerMain() {
                 std::vector<uint8_t> annexB;
                 uint64_t timestampUs = 0;
                 bool idr = false;
-                if (mEncoder.encode(frame->rgba.data(), frame->width, frame->height,
+                if (mEncoder.encode(frame->rgba.data(), frame->width, frame->height, mVideo,
                         mForceIdr, annexB, timestampUs, idr)) {
                     // Si se pidió keyframe y este frame no lo llevó, se reintenta
                     // en el siguiente; una vez emitido no se vuelve a forzar.
@@ -161,6 +161,19 @@ void Client::workerMain() {
             while (lines.next(line)) {
                 if (IsForceIdrLine(line)) {
                     mForceIdr = true;
+                    continue;
+                }
+                // `video_config` es la configuración de emisión que el Servidor
+                // reenvía del drawer de la app (SPEC-003 §4): aplicarla es lo
+                // que permite bajar resolución o bitrate sin tocar el wire.
+                VideoConfig video;
+                if (ParseVideoConfig(line, video)) {
+                    if (video.width != mVideo.width || video.height != mVideo.height ||
+                        video.bitrateKbps != mVideo.bitrateKbps) {
+                        mVideo = video;
+                        // Encoder nuevo ⇒ el cliente necesita SPS/PPS y un IDR.
+                        mForceIdr = true;
+                    }
                     continue;
                 }
                 InputReport report;

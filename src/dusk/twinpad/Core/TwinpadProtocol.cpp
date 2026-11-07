@@ -1,5 +1,6 @@
 #include "dusk/twinpad/Core/TwinpadProtocol.h"
 
+#include <algorithm>
 #include <cstdlib>
 
 namespace dusk::twinpad {
@@ -493,6 +494,88 @@ bool ParseInputReport(std::string_view line, InputReport& out) {
     }
 
     out = report;
+    return true;
+}
+
+bool ParseVideoConfig(std::string_view line, VideoConfig& out) {
+    Scanner scanner(line);
+    VideoConfig config;
+    bool haveType = false;
+    bool haveWidth = false;
+    bool haveHeight = false;
+    bool haveAnyValue = false;
+
+    if (!scanner.accept('{') || scanner.accept('}')) {
+        return false;
+    }
+    for (;;) {
+        std::string key;
+        if (!scanner.parseString(key) || !scanner.accept(':')) {
+            return false;
+        }
+        if (key == "type") {
+            std::string type;
+            if (!scanner.parseString(type) || type != "video_config" || haveType) {
+                return false;
+            }
+            haveType = true;
+        } else if (key == "bitrate_kbps") {
+            long long integer = 0;
+            if (!scanner.parseInteger(integer) || integer < 0) {
+                return false;
+            }
+            // Mismo clamp que el Servidor y Cemu (SPEC-003 §4): 1.000–30.000.
+            config.bitrateKbps = static_cast<int>(std::clamp<long long>(integer, 1000, 30000));
+            haveAnyValue = true;
+        } else if (key == "w") {
+            long long integer = 0;
+            if (!scanner.parseInteger(integer) || integer < 0 || integer > 3840) {
+                return false;
+            }
+            config.width = static_cast<uint32_t>(integer);
+            haveWidth = true;
+            haveAnyValue = true;
+        } else if (key == "h") {
+            long long integer = 0;
+            if (!scanner.parseInteger(integer) || integer < 0 || integer > 2160) {
+                return false;
+            }
+            config.height = static_cast<uint32_t>(integer);
+            haveHeight = true;
+            haveAnyValue = true;
+        } else if (!scanner.skipValue(0)) {
+            // Campo ajeno (p. ej. `fps` de una app anterior a CR-029).
+            return false;
+        }
+        if (scanner.accept('}')) {
+            break;
+        }
+        if (!scanner.accept(',')) {
+            return false;
+        }
+    }
+
+    if (!scanner.atEnd() || !haveType || !haveAnyValue) {
+        return false;
+    }
+    // `w` y `h` viajan juntos; `0/0` es el centinela de nativo (CR-074).
+    if (haveWidth != haveHeight) {
+        return false;
+    }
+    if (haveWidth) {
+        const bool nativeWidth = config.width == 0;
+        const bool nativeHeight = config.height == 0;
+        if (nativeWidth != nativeHeight) {
+            return false;
+        }
+        if (!nativeWidth) {
+            // Dimensiones pares: I420 no tiene muestreo para impares.
+            config.width = std::clamp<uint32_t>(config.width, 16, 3840) & ~1u;
+            config.height = std::clamp<uint32_t>(config.height, 16, 2160) & ~1u;
+        }
+    }
+
+    out = config;
     return true;
 }
 

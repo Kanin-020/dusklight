@@ -1493,6 +1493,8 @@ set(DUSK_FILES
         src/dusk/twinpad/Video/TwinpadH264.cpp
         src/dusk/twinpad/Channels/TwinpadPadMap.h
         src/dusk/twinpad/Channels/TwinpadPadMap.cpp
+        src/dusk/twinpad/Channels/TwinpadTouch.h
+        src/dusk/twinpad/Channels/TwinpadTouch.cpp
         #src/dusk/m_Do_ext_dusk.cpp
         src/dusk/hq_minimap.cpp
         src/dusk/imgui/ImGuiActorSpawner.cpp

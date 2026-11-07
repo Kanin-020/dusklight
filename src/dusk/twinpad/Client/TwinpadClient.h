@@ -82,6 +82,10 @@ private:
     // keyframe llega por su propia lectura del socket.
     H264Encoder mEncoder;
     bool mForceIdr = true;
+    // Última `video_config` de la sesión (SPEC-003 §4): resolución de emisión y
+    // bitrate que el drawer de la app pidió. Por defecto, panel nativo a
+    // 8.000 kbps — el mismo valor que anuncia el Servidor.
+    VideoConfig mVideo;
 };
 
 }  // namespace dusk::twinpad

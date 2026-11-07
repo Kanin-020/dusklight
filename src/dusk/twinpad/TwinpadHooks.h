@@ -1,9 +1,9 @@
 #pragma once
 
-// Punto de entrada del adaptador Twinpad desde el juego. Tres funciones, dos
-// sitios de llamada, a propósito: el adaptador no conoce el companion, solo la
-// superficie que ese archivo ya presenta y el pad virtual que ya usa el táctil
-// (ver README.md).
+// Punto de entrada del adaptador Twinpad desde el juego. El adaptador no
+// conoce el companion: expone el gesto táctil ya normalizado y es
+// `dualscreen.cpp` — que sí es dueño del panel — quien lo entrega (ver
+// README.md).
 namespace dusk::twinpad {
 
 // Antes de JUTGamePad::read() (m_Do_controller_pad.cpp): aplica el último
@@ -17,6 +17,11 @@ void applyInput();
 // que publicar y el adaptador deja de capturar. También es donde se arranca o
 // se detiene el cliente según el ajuste «Twinpad».
 void tick(bool hudEnabled);
+
+// Siguiente gesto táctil del teléfono, en coordenadas normalizadas 0…1 sobre
+// el panel. `action` usa la convención del companion: 0 = down, 1 = move,
+// 2 = up. Devuelve como mucho un evento por frame (el panel consume uno solo).
+bool takeTouch(float& u, float& v, int& action);
 
 // Cierra el hilo de red. Llamado al salir del juego.
 void shutdown();

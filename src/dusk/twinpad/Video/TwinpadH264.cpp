@@ -22,6 +22,13 @@ constexpr float kFrameRate = 30.0f;
 // (`video_force_idr`); esto cubre el caso de que esa línea se pierda.
 constexpr int kIntraPeriod = 60;
 
+// Slice único = un solo hilo de codificación, y a 1080p eso deja el panel en
+// una fracción de la tasa que pide SPEC-003. Cuatro slices con
+// `iMultipleThreadIdc` paralelizan el encoder en CPU (el mismo ajuste del
+// adaptador de Cemu). El slice partido no cambia el wire: los NAL se
+// concatenan en una sola access unit.
+constexpr uint32_t kSliceCount = 4;
+
 // BT.601 de rango limitado, la conversión que espera un decodificador H.264
 // corriente. Los paneles son opacos, así que el alfa del readback se descarta.
 void rgbaToI420(const uint8_t* rgba, uint32_t width, uint32_t height,
@@ -73,6 +80,43 @@ void rgbaToI420(const uint8_t* rgba, uint32_t width, uint32_t height,
     }
 }
 
+uint32_t evenDimension(uint32_t value, uint32_t limit) {
+    return std::clamp(value, kMinDimension, limit) & ~1u;
+}
+
+}  // namespace
+
+void scaleRgbaNearest(const uint8_t* src, uint32_t srcWidth, uint32_t srcHeight,
+    uint32_t dstWidth, uint32_t dstHeight, std::vector<uint8_t>& out) {
+    out.resize(static_cast<size_t>(dstWidth) * dstHeight * 4);
+    if (src == nullptr || srcWidth == 0 || srcHeight == 0 || dstWidth == 0 || dstHeight == 0) {
+        out.clear();
+        return;
+    }
+    if (srcWidth == dstWidth && srcHeight == dstHeight) {
+        std::copy(src, src + static_cast<size_t>(srcWidth) * srcHeight * 4, out.begin());
+        return;
+    }
+
+    // Mapa de columnas precalculado: el índice no depende de la fila y así el
+    // bucle interno queda en un lookup por píxel en vez de una división.
+    std::vector<uint32_t> columns(dstWidth);
+    for (uint32_t x = 0; x < dstWidth; ++x) {
+        columns[x] = std::min(srcWidth - 1, x * srcWidth / dstWidth);
+    }
+    for (uint32_t y = 0; y < dstHeight; ++y) {
+        const uint32_t srcRow = std::min(srcHeight - 1, y * srcHeight / dstHeight);
+        const uint8_t* row = src + static_cast<size_t>(srcRow) * srcWidth * 4;
+        uint8_t* dstRow = out.data() + static_cast<size_t>(y) * dstWidth * 4;
+        for (uint32_t x = 0; x < dstWidth; ++x) {
+            const uint8_t* pixel = row + static_cast<size_t>(columns[x]) * 4;
+            std::copy(pixel, pixel + 4, dstRow + static_cast<size_t>(x) * 4);
+        }
+    }
+}
+
+namespace {
+
 uint8_t nalType(const uint8_t* data, size_t size) {
     size_t index = 0;
     if (size >= 4 && data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 1) {
@@ -108,8 +152,9 @@ void H264Encoder::destroy() {
     mHeight = 0;
 }
 
-bool H264Encoder::ensureEncoder(uint32_t width, uint32_t height) {
-    if (mImpl != nullptr && mImpl->encoder != nullptr && width == mWidth && height == mHeight) {
+bool H264Encoder::ensureEncoder(uint32_t width, uint32_t height, int bitrateKbps) {
+    if (mImpl != nullptr && mImpl->encoder != nullptr && width == mWidth && height == mHeight &&
+        bitrateKbps == mBitrateKbps) {
         return true;
     }
     destroy();
@@ -124,7 +169,7 @@ bool H264Encoder::ensureEncoder(uint32_t width, uint32_t height) {
     params.iUsageType = SCREEN_CONTENT_REAL_TIME;
     params.iPicWidth = static_cast<int>(width);
     params.iPicHeight = static_cast<int>(height);
-    params.iTargetBitrate = kBitrateKbps * 1000;
+    params.iTargetBitrate = bitrateKbps * 1000;
     params.iRCMode = RC_BITRATE_MODE;
     params.fMaxFrameRate = kFrameRate;
     params.iTemporalLayerNum = 1;
@@ -151,10 +196,13 @@ bool H264Encoder::ensureEncoder(uint32_t width, uint32_t height) {
     layer.iVideoWidth = static_cast<int>(width);
     layer.iVideoHeight = static_cast<int>(height);
     layer.fFrameRate = kFrameRate;
-    layer.iSpatialBitrate = kBitrateKbps * 1000;
-    layer.iMaxSpatialBitrate = kBitrateKbps * 2000;
-    layer.sSliceArgument.uiSliceMode = SM_SINGLE_SLICE;
-    layer.sSliceArgument.uiSliceNum = 1;
+    layer.iSpatialBitrate = bitrateKbps * 1000;
+    layer.iMaxSpatialBitrate = bitrateKbps * 2000;
+    // Slices paralelos: OpenH264 solo usa más de un hilo si la imagen va
+    // partida (un slice único ignora `iMultipleThreadIdc`).
+    layer.sSliceArgument.uiSliceMode = SM_FIXEDSLCNUM_SLICE;
+    layer.sSliceArgument.uiSliceNum = kSliceCount;
+    params.iMultipleThreadIdc = static_cast<unsigned short>(kSliceCount);
 
     if (encoder->InitializeExt(&params) != cmResultSuccess) {
         WelsDestroySVCEncoder(encoder);
@@ -164,6 +212,7 @@ bool H264Encoder::ensureEncoder(uint32_t width, uint32_t height) {
     mImpl = new Impl{encoder};
     mWidth = width;
     mHeight = height;
+    mBitrateKbps = bitrateKbps;
     mEpochUs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
@@ -171,8 +220,9 @@ bool H264Encoder::ensureEncoder(uint32_t width, uint32_t height) {
     return true;
 }
 
-bool H264Encoder::encode(const uint8_t* rgba, uint32_t width, uint32_t height, bool forceIdr,
-    std::vector<uint8_t>& annexB, uint64_t& timestampUs, bool& idr) {
+bool H264Encoder::encode(const uint8_t* rgba, uint32_t width, uint32_t height,
+    const VideoConfig& config, bool forceIdr, std::vector<uint8_t>& annexB,
+    uint64_t& timestampUs, bool& idr) {
     annexB.clear();
     timestampUs = 0;
     idr = false;
@@ -188,7 +238,22 @@ bool H264Encoder::encode(const uint8_t* rgba, uint32_t width, uint32_t height, b
         height > kMaxHeight) {
         return false;
     }
-    if (!ensureEncoder(width, height)) {
+
+    // Resolución de emisión: la de `video_config` si la pide, o la nativa del
+    // panel (centinela 0/0 de SPEC-003 §4).
+    const uint32_t targetWidth =
+        config.width != 0 ? evenDimension(config.width, kMaxWidth) : width;
+    const uint32_t targetHeight =
+        config.height != 0 ? evenDimension(config.height, kMaxHeight) : height;
+    const int bitrateKbps = std::clamp(config.bitrateKbps, 1000, 30000);
+
+    const uint8_t* pixels = rgba;
+    if (targetWidth != width || targetHeight != height) {
+        scaleRgbaNearest(rgba, width, height, targetWidth, targetHeight, mScaled);
+        pixels = mScaled.data();
+    }
+
+    if (!ensureEncoder(targetWidth, targetHeight, bitrateKbps)) {
         return false;
     }
 
@@ -196,7 +261,7 @@ bool H264Encoder::encode(const uint8_t* rgba, uint32_t width, uint32_t height, b
         mImpl->encoder->ForceIntraFrame(true);
     }
 
-    rgbaToI420(rgba, mWidth, mHeight, mI420);
+    rgbaToI420(pixels, mWidth, mHeight, mI420);
 
     const uint64_t nowUs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(

@@ -42,6 +42,7 @@ if (DUSK_TWINPAD)
     twinpad_protocol_test.cpp
     ../src/dusk/twinpad/Core/TwinpadProtocol.cpp
     ../src/dusk/twinpad/Channels/TwinpadPadMap.cpp
+    ../src/dusk/twinpad/Channels/TwinpadTouch.cpp
     ../src/dusk/twinpad/Video/TwinpadH264.cpp
   )
   target_include_directories(dusk_twinpad_tests PRIVATE ../src ../include)

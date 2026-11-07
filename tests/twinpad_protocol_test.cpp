@@ -6,6 +6,7 @@
 // Contrato de referencia (repo Twinpad): SPEC-006 §4/§7, SPEC-004 §4.
 
 #include "dusk/twinpad/Channels/TwinpadPadMap.h"
+#include "dusk/twinpad/Channels/TwinpadTouch.h"
 #include "dusk/twinpad/Core/TwinpadProtocol.h"
 #include "dusk/twinpad/Video/TwinpadH264.h"
 
@@ -28,6 +29,10 @@ using dusk::twinpad::LineBuffer;
 using dusk::twinpad::mapInput;
 using dusk::twinpad::PadState;
 using dusk::twinpad::ParseInputReport;
+using dusk::twinpad::ParseVideoConfig;
+using dusk::twinpad::TouchEvent;
+using dusk::twinpad::TouchTracker;
+using dusk::twinpad::VideoConfig;
 
 constexpr char kValidReport[] =
     "{\"type\":\"input_report\",\"seq\":7,\"stick_lx\":-64,\"stick_ly\":100,"
@@ -87,6 +92,42 @@ TEST(TwinpadFrame, RecognisesOnlyTheCanonicalForceIdrLine) {
     EXPECT_FALSE(IsForceIdrLine(""));
 }
 
+TEST(TwinpadVideoConfig, AppliesBitrateAndKeepsNativeResolution) {
+    // SPEC-003 §4: `video_config` solo con bitrate no toca las dimensiones.
+    VideoConfig config;
+    ASSERT_TRUE(ParseVideoConfig("{\"type\":\"video_config\",\"bitrate_kbps\":12000}", config));
+    EXPECT_EQ(config.bitrateKbps, 12000);
+    EXPECT_EQ(config.width, 0u);
+    EXPECT_EQ(config.height, 0u);
+}
+
+TEST(TwinpadVideoConfig, ClampsBitrateAndRoundsOddDimensions) {
+    VideoConfig config;
+    ASSERT_TRUE(ParseVideoConfig(
+        "{\"type\":\"video_config\",\"bitrate_kbps\":50000,\"w\":1281,\"h\":721}", config));
+    EXPECT_EQ(config.bitrateKbps, 30000);
+    EXPECT_EQ(config.width, 1280u);
+    EXPECT_EQ(config.height, 720u);
+
+    ASSERT_TRUE(ParseVideoConfig(
+        "{\"type\":\"video_config\",\"bitrate_kbps\":10,\"w\":20,\"h\":32}", config));
+    EXPECT_EQ(config.bitrateKbps, 1000);
+}
+
+TEST(TwinpadVideoConfig, ToleratesMetadataFieldsAndRejectsBrokenPairing) {
+    VideoConfig config;
+    // `fps` de una app anterior a CR-029 no configura nada: se salta.
+    ASSERT_TRUE(ParseVideoConfig("{\"type\":\"video_config\",\"fps\":60,\"w\":0,\"h\":0}", config));
+    EXPECT_EQ(config.width, 0u);
+    EXPECT_EQ(config.height, 0u);
+    // w sin h, centinela mezclado con dimensión, o línea sin valores.
+    EXPECT_FALSE(ParseVideoConfig("{\"type\":\"video_config\",\"w\":1280}", config));
+    EXPECT_FALSE(ParseVideoConfig("{\"type\":\"video_config\",\"w\":0,\"h\":1080}", config));
+    EXPECT_FALSE(ParseVideoConfig("{\"type\":\"video_config\"}", config));
+    EXPECT_FALSE(ParseVideoConfig("{\"type\":\"input_report\",\"bitrate_kbps\":8000}", config));
+    EXPECT_FALSE(ParseVideoConfig("{\"type\":\"video_config\",\"w\":1280.5,\"h\":720}", config));
+}
+
 TEST(TwinpadH264, FirstFrameIsAnnexBWithSpsPpsAndIdr) {
     constexpr uint32_t width = 64;
     constexpr uint32_t height = 64;
@@ -105,7 +146,8 @@ TEST(TwinpadH264, FirstFrameIsAnnexBWithSpsPpsAndIdr) {
     std::vector<uint8_t> annexB;
     uint64_t timestampUs = 0;
     bool idr = false;
-    ASSERT_TRUE(encoder.encode(rgba.data(), width, height, true, annexB, timestampUs, idr));
+    ASSERT_TRUE(encoder.encode(rgba.data(), width, height, VideoConfig{}, true, annexB,
+        timestampUs, idr));
     EXPECT_TRUE(idr);
     EXPECT_EQ(encoder.width(), width);
     EXPECT_EQ(encoder.height(), height);
@@ -140,11 +182,13 @@ TEST(TwinpadH264, FollowUpFrameIsNotAnIdrAndKeepsTimestampsMonotonic) {
     std::vector<uint8_t> annexB;
     uint64_t firstTs = 0;
     bool firstIdr = false;
-    ASSERT_TRUE(encoder.encode(rgba.data(), width, height, true, annexB, firstTs, firstIdr));
+    ASSERT_TRUE(encoder.encode(rgba.data(), width, height, VideoConfig{}, true, annexB,
+        firstTs, firstIdr));
 
     uint64_t secondTs = 0;
     bool secondIdr = false;
-    ASSERT_TRUE(encoder.encode(rgba.data(), width, height, false, annexB, secondTs, secondIdr));
+    ASSERT_TRUE(encoder.encode(rgba.data(), width, height, VideoConfig{}, false, annexB,
+        secondTs, secondIdr));
     EXPECT_FALSE(secondIdr);
     EXPECT_GE(secondTs, firstTs);
 }
@@ -156,10 +200,56 @@ TEST(TwinpadH264, RejectsDimensionsOutsideThePanelContract) {
     uint64_t timestampUs = 0;
     bool idr = false;
     // < 16 (SPEC-003 §4) y > 3840 de ancho no son panel válido.
-    EXPECT_FALSE(encoder.encode(tiny.data(), 8, 8, true, annexB, timestampUs, idr));
+    EXPECT_FALSE(encoder.encode(tiny.data(), 8, 8, VideoConfig{}, true, annexB, timestampUs,
+        idr));
     EXPECT_TRUE(annexB.empty());
-    EXPECT_FALSE(encoder.encode(tiny.data(), 3842, 64, true, annexB, timestampUs, idr));
-    EXPECT_FALSE(encoder.encode(nullptr, 64, 64, true, annexB, timestampUs, idr));
+    EXPECT_FALSE(encoder.encode(tiny.data(), 3842, 64, VideoConfig{}, true, annexB,
+        timestampUs, idr));
+    EXPECT_FALSE(encoder.encode(nullptr, 64, 64, VideoConfig{}, true, annexB, timestampUs,
+        idr));
+}
+
+TEST(TwinpadH264, EncodesAtTheResolutionRequestedByTheSession) {
+    // `video_config` fija la resolución de emisión (SPEC-003 §4): el encoder se
+    // reinicia a lo pedido y el IDR sale ya a ese tamaño.
+    constexpr uint32_t width = 64;
+    constexpr uint32_t height = 48;
+    std::vector<uint8_t> rgba(static_cast<size_t>(width) * height * 4, 0x33);
+
+    H264Encoder encoder;
+    std::vector<uint8_t> annexB;
+    uint64_t timestampUs = 0;
+    bool idr = false;
+    VideoConfig config;
+    config.width = 32;
+    config.height = 32;
+    config.bitrateKbps = 2000;
+    ASSERT_TRUE(encoder.encode(rgba.data(), width, height, config, true, annexB, timestampUs,
+        idr));
+    EXPECT_TRUE(idr);
+    EXPECT_EQ(encoder.width(), 32u);
+    EXPECT_EQ(encoder.height(), 32u);
+}
+
+TEST(TwinpadH264, ScalesRgbaNearestNeighbour) {
+    // 2x2 de colores distintos → 4x4 repite cada píxel sin mezclar (CR-074).
+    const std::vector<uint8_t> src = {
+        1, 2, 3, 4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13, 14, 15, 16,
+    };
+    std::vector<uint8_t> out;
+    dusk::twinpad::scaleRgbaNearest(src.data(), 2, 2, 4, 4, out);
+    ASSERT_EQ(out.size(), 4u * 4u * 4u);
+    for (uint32_t y = 0; y < 4; ++y) {
+        for (uint32_t x = 0; x < 4; ++x) {
+            const size_t srcIndex = ((y / 2) * 2 + (x / 2)) * 4;
+            const size_t dstIndex = (y * 4 + x) * 4;
+            for (int channel = 0; channel < 4; ++channel) {
+                EXPECT_EQ(out[dstIndex + static_cast<size_t>(channel)],
+                    src[srcIndex + static_cast<size_t>(channel)]);
+            }
+        }
+    }
 }
 
 TEST(TwinpadLineBuffer, SplitsFramesAndStripsCarriageReturn) {
@@ -256,6 +346,50 @@ TEST(TwinpadInputReport, RejectsOtherMessageTypesAndTrailingBytes) {
     EXPECT_FALSE(ParseInputReport(line, report));
     EXPECT_FALSE(ParseInputReport(std::string(kValidReport) + "{}", report));
     EXPECT_FALSE(ParseInputReport("", report));
+}
+
+TEST(TwinpadTouch, TranslatesEdgesToPanelGestures) {
+    // El panel consume 0 = down, 1 = move, 2 = up (CR-092).
+    TouchTracker tracker;
+    TouchEvent event;
+
+    InputReport report;
+    report.touchX = 32767;
+    report.touchY = 65535;
+    report.touchPressed = true;
+    ASSERT_TRUE(tracker.update(report, event));
+    EXPECT_EQ(event.action, 0);
+    EXPECT_NEAR(event.u, 0.5f, 0.001f);
+    EXPECT_NEAR(event.v, 1.0f, 0.001f);
+
+    // Un reporte sin cambio de posición no repite el gesto.
+    EXPECT_FALSE(tracker.update(report, event));
+
+    report.touchX = 65535;
+    ASSERT_TRUE(tracker.update(report, event));
+    EXPECT_EQ(event.action, 1);
+    EXPECT_NEAR(event.u, 1.0f, 0.001f);
+
+    report.touchPressed = false;
+    ASSERT_TRUE(tracker.update(report, event));
+    EXPECT_EQ(event.action, 2);
+    // El up cae donde estaba el dedo, no en el origen.
+    EXPECT_NEAR(event.u, 1.0f, 0.001f);
+    EXPECT_FALSE(tracker.release(event));
+}
+
+TEST(TwinpadTouch, ReleasesAHeldFingerOnDisconnect) {
+    TouchTracker tracker;
+    TouchEvent event;
+    InputReport report;
+    report.touchX = 1000;
+    report.touchY = 2000;
+    report.touchPressed = true;
+    ASSERT_TRUE(tracker.update(report, event));
+    ASSERT_TRUE(tracker.release(event));
+    EXPECT_EQ(event.action, 2);
+    EXPECT_NEAR(event.u, 1000.0f / 65535.0f, 0.0001f);
+    EXPECT_FALSE(tracker.release(event));
 }
 
 TEST(TwinpadPadMap, MapsButtonsAndTriggers) {

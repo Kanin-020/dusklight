@@ -69,6 +69,16 @@ struct InputReport {
     bool hasMotion = false;
 };
 
+// Configuración de emisión vigente de la sesión (SPEC-003 §4, CR-027/CR-030/
+// CR-074). `width`/`height` en 0/0 significan «dimensión nativa del panel»; el
+// encoder escala a lo pedido antes de codificar. `bitrateKbps` ya viene
+// clampeado al rango del contrato (1.000–30.000).
+struct VideoConfig {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    int bitrateKbps = 8000;
+};
+
 // Línea de anuncio (§7 paso 1). `second_screen` porque este adaptador publica
 // el panel; `input_consumption` porque aplica el gamepad del teléfono.
 std::string BuildAnnounceLine();
@@ -106,5 +116,13 @@ private:
 // cualquier desviación: `type` distinto, campo desconocido o faltante, valor no
 // entero o fuera de rango.
 bool ParseInputReport(std::string_view line, InputReport& out);
+
+// Parseo de una línea `video_config` (sin `\n`), la que el Servidor reenvía del
+// drawer de la app (SPEC-003 §4). `type` es obligatorio; `w`/`h` van juntos (o
+// no van) y `0/0` es el centinela de dimensión nativa. Los campos desconocidos
+// se saltan a propósito: el Servidor puede añadir metadata (`fps` de apps
+// antiguas, sin efecto desde CR-029). Devuelve false si la línea no configura
+// nada o si un campo conocido tiene forma inválida.
+bool ParseVideoConfig(std::string_view line, VideoConfig& out);
 
 }  // namespace dusk::twinpad

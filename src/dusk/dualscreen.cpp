@@ -1540,6 +1540,17 @@ void beginHudCapture() {
     // panel presentándose, arma un readback y lo publica. Nada del estado del
     // companion se le pasa ni se lee desde aquí salvo "¿hay panel?".
     twinpad::tick(enabled);
+    // El táctil del teléfono sí se entrega: el panel es del companion y su capa
+    // táctil ya sabe qué hay debajo de cada coordenada, así que el adaptador
+    // solo aporta el gesto normalizado y el acoplamiento vive en este archivo.
+    {
+        float touchU = 0.0f;
+        float touchV = 0.0f;
+        int touchAction = 0;
+        if (twinpad::takeTouch(touchU, touchV, touchAction)) {
+            companion::touchEvent(touchAction, touchU, touchV);
+        }
+    }
 #endif
     // Boot/loading: keep the second screen on the branded splash instead of
     // black until the dashboard has real content. Leaving gameplay (quit to
