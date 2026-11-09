@@ -18,6 +18,7 @@
 #include "dusk/action_bindings.h"
 #include "dusk/config.hpp"
 #include "dusk/gamepad_color.h"
+#include "dusk/twinpad/TwinpadHooks.h"
 
 namespace dusk::ui {
 namespace {
@@ -292,9 +293,13 @@ void ControllerConfigWindow::update() {
     poll_pending_binding();
     // El adaptador selecciona o suelta Twinpad al conectar/desconectar; con la
     // ventana abierta, «Device» debe reflejarlo sin reabrir el menú.
+    // También cambia cuando el teléfono se conecta o desconecta, porque el
+    // botón Twinpad solo se muestra con el adaptador conectado.
     const int twinpadPort = getSettings().game.twinpadInputPort.getValue();
-    if (twinpadPort != mLastTwinpadPort) {
+    const bool twinpadConnected = twinpad::isConnected();
+    if (twinpadPort != mLastTwinpadPort || twinpadConnected != mLastTwinpadConnected) {
         mLastTwinpadPort = twinpadPort;
+        mLastTwinpadConnected = twinpadConnected;
         refresh_controller_page();
     }
     Window::update();
@@ -459,24 +464,32 @@ void ControllerConfigWindow::render_page(Pane& pane, int port, Page page) {
 
         // Un solo dueño por puerto: Twinpad escribe el pad virtual, así que al
         // elegirlo se suelta cualquier mando SDL o teclado del mismo puerto.
-        pane.add_button({
-                            .text = "Twinpad",
-                            .isSelected = [port] { return twinpad_active(port); },
-                        })
-            .on_pressed([this, port] {
-                mDoAud_seStartMenu(kSoundClick);
-                cancel_pending_binding();
-                PADClearPort(port);
-                PADSetKeyboardActive(static_cast<u32>(port), FALSE);
-                PADSerializeMappings();
-                config::ClearAllActionBindings(port);
-                getSettings().game.twinpadInputPort.setValue(port);
-                refresh_controller_page();
-            });
+        // Solo aparece con el teléfono conectado (o si ya es el dueño del
+        // puerto, para que la selección actual no desaparezca).
+        if (twinpad::isConnected() || twinpad_active(port)) {
+            pane.add_button({
+                                .text = "Twinpad",
+                                .isSelected = [port] { return twinpad_active(port); },
+                            })
+                .on_pressed([this, port] {
+                    mDoAud_seStartMenu(kSoundClick);
+                    cancel_pending_binding();
+                    PADClearPort(port);
+                    PADSetKeyboardActive(static_cast<u32>(port), FALSE);
+                    PADSerializeMappings();
+                    config::ClearAllActionBindings(port);
+                    getSettings().game.twinpadInputPort.setValue(port);
+                    refresh_controller_page();
+                });
+        }
 
         const u32 controllerCount = PADCount();
         if (controllerCount == 0) {
-            pane.add_text("No Device Detected");
+            // Twinpad ya se ofrece arriba cuando está conectado; el aviso solo
+            // dice que no hay mandos SDL.
+            if (!twinpad::isConnected() && !twinpad_active(port)) {
+                pane.add_text("No Device Detected");
+            }
             break;
         }
 

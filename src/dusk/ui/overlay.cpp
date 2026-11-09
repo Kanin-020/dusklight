@@ -410,8 +410,12 @@ void Overlay::update() {
     }
 
     u32 count = 0;
+    // Twinpad no es un gamepad SDL ni teclado: si es el dispositivo del puerto 0,
+    // el puerto sí tiene control y no debe mostrarse el aviso.
+    const bool twinpadOnPort = getSettings().game.twinpadInputPort.getValue() == PAD_CHAN0;
     const bool showControllerWarning = PADGetIndexForPort(PAD_CHAN0) < 0 &&
                                        PADGetKeyButtonBindings(PAD_CHAN0, &count) == nullptr &&
+                                       !twinpadOnPort &&
                                        !getSettings().game.enableTouchControls &&
                                        dynamic_cast<Window*>(top_document()) == nullptr &&
                                        dynamic_cast<WindowSmall*>(top_document()) == nullptr &&

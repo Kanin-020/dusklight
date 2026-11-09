@@ -56,6 +56,7 @@ private:
     // Último puerto Twinpad visto, para refrescar «Device» cuando el adaptador
     // lo selecciona o lo suelta con la ventana abierta.
     int mLastTwinpadPort = -2;
+    bool mLastTwinpadConnected = false;
 };
 
 Rml::String native_button_name(SDL_Gamepad* gamepad, u32 buttonUntyped);
