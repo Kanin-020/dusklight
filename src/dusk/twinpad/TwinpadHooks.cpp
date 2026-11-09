@@ -38,6 +38,8 @@ bool sPadApplied = false;
 // usuario cambia de dispositivo con el teléfono conectado.
 int sAppliedPort = -1;
 bool sLoggedFirstInput = false;
+// Botones del último pad aplicado (máscara PADButton), para la navegación del menú de inicio.
+u32 sHeldButtons = 0;
 uint64_t sLastLoggedFrames = 0;
 
 // Puerto que Twinpad ocupa al conectar sin que el usuario haya elegido otro.
@@ -65,6 +67,7 @@ void applyPad(const PadState* pad, int port) {
         // Sin reporte vigente o tras una desconexión: nunca dejar un botón
         // pulsado para siempre.
         PADClearVirtualStatus(static_cast<u32>(port));
+        sHeldButtons = 0;
         return;
     }
 
@@ -113,6 +116,7 @@ void applyPad(const PadState* pad, int port) {
     status.substickY = stickValue(pad->substickY);
     status.triggerLeft = static_cast<u8>(std::clamp(pad->triggerLeft, 0.0f, 1.0f) * 255.0f);
     status.triggerRight = static_cast<u8>(std::clamp(pad->triggerRight, 0.0f, 1.0f) * 255.0f);
+    sHeldButtons = status.button;
     PADSetVirtualStatus(static_cast<u32>(port), &status);
 }
 
@@ -269,6 +273,14 @@ void tick(bool hudEnabled) {
     }
 }
 
+bool isConnected() {
+    return sStarted && sClient.connected();
+}
+
+uint32_t heldButtons() {
+    return sHeldButtons;
+}
+
 bool takeTouch(float& u, float& v, int& action) {
     if (!sTouchPending) {
         return false;
@@ -294,6 +306,17 @@ void shutdown() {
     sLoggedFirstInput = false;
 }
 
+}  // namespace dusk::twinpad
+
+#else
+
+namespace dusk::twinpad {
+bool isConnected() {
+    return false;
+}
+uint32_t heldButtons() {
+    return 0;
+}
 }  // namespace dusk::twinpad
 
 #endif  // DUSK_TWINPAD

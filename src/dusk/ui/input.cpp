@@ -14,6 +14,11 @@
 #include <cmath>
 
 #include "dusk/action_bindings.h"
+#include "dusk/twinpad/TwinpadHooks.h"
+
+#ifndef DUSK_TWINPAD
+#define DUSK_TWINPAD 0
+#endif
 
 namespace dusk::ui::input {
 namespace {
@@ -929,9 +934,43 @@ void handle_event(const SDL_Event& event) noexcept {
     sync_input_block();
 }
 
+#if DUSK_TWINPAD
+// El pad de Twinpad se escribe en el pad virtual del juego, que el menú de
+// inicio no lee. Sus flancos se traducen a las mismas teclas que un mando.
+void dispatch_twinpad_menu_keys(Rml::Context& context) noexcept {
+    static u32 sPrevHeld = 0;
+    const u32 held = dusk::twinpad::heldButtons();
+    const u32 changed = held ^ sPrevHeld;
+    sPrevHeld = held;
+    constexpr PADButton kMenuButtons[] = {
+        PAD_BUTTON_UP, PAD_BUTTON_DOWN, PAD_BUTTON_LEFT, PAD_BUTTON_RIGHT,
+        PAD_BUTTON_A, PAD_BUTTON_B, PAD_TRIGGER_L, PAD_TRIGGER_R,
+    };
+    for (const PADButton button : kMenuButtons) {
+        if ((changed & button) == 0) {
+            continue;
+        }
+        const auto key = map_pad_button(button);
+        if (key == Rml::Input::KI_UNKNOWN) {
+            continue;
+        }
+        if ((held & button) != 0) {
+            emit_key_press(context, key);
+        } else {
+            context.ProcessKeyUp(key, 0);
+        }
+    }
+}
+#endif
+
 void update_input() noexcept {
     auto* context = aurora::rmlui::get_context();
     if (context != nullptr) {
+#if DUSK_TWINPAD
+        if (is_prelaunch_open()) {
+            dispatch_twinpad_menu_keys(*context);
+        }
+#endif
         const double now = now_seconds();
         const double dtSeconds = sLastInputUpdateAt == 0.0 ?
                                      0.0 :
